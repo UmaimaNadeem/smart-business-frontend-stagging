@@ -23,5 +23,7 @@ export function middleware(request: NextRequest) {
 
 // 🟢 Matcher — which routes middleware applies to
 export const config = {
-  matcher: ["/((?!_next|api|favicon.ico).*)"], // all pages except _next, api, favicon.ico
+  matcher: [
+    "/((?!api|_next/static|_next/image|images|favicon.ico|.*\\..*).*)",
+  ],
 };
