@@ -1,74 +1,81 @@
 "use client";
-import React from "react";
+
+import React, { useEffect, useState } from "react";
 import { useModal } from "../../hooks/useModal";
 import { Modal } from "../ui/modal";
 import Button from "../ui/button/Button";
 import Input from "../form/input/InputField";
 import Label from "../form/Label";
+import Image from "next/image";
 
 export default function UserInfoCard() {
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const { isOpen, openModal, closeModal } = useModal();
-  const handleSave = () => {
-    // Handle save logic here
-    console.log("Saving changes...");
-    closeModal();
+
+  const getToken = () => {
+    const match = document.cookie.match(/(^| )token=([^;]+)/);
+    return match ? match[2] : null;
   };
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        const token = getToken();
+        if (!token) return;
+
+        const res = await fetch(
+          "http://smart-business-backend-stagging.test/api/user",
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+          }
+        );
+
+        const data = await res.json();
+
+        if (res.ok) setUser(data.data || data);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUser();
+  }, []);
+
+  if (loading) return <p className="p-5">Loading...</p>;
+  if (!user) return <p className="p-5">No user data found</p>;
+
+  const [firstName, lastName] = user.name?.split(" ") || ["", ""];
+
+  const assignments = user.assignments || [];
+  const userImage = user?.image
+    ? user.image
+    : "/images/user/owner.jpg"; //
   return (
     <div className="p-5 border border-gray-200 rounded-2xl dark:border-gray-800 lg:p-6">
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+      <div className="mr-3 overflow-hidden rounded-full">
+        <Image
+          width={144}
+          height={144}
+          src={userImage}
+          alt="User"
+        />
+      </div>
+      {/* USER HEADER */}
+      <div className="mb-6 flex justify-between items-center">
         <div>
-          <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90 lg:mb-6">
-            Personal Information
-          </h4>
-
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-7 2xl:gap-x-32">
-            <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                First Name
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                Musharof
-              </p>
-            </div>
-
-            <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                Last Name
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                Chowdhury
-              </p>
-            </div>
-
-            <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                Email address
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                randomuser@pimjo.com
-              </p>
-            </div>
-
-            <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                Phone
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                +09 363 398 46
-              </p>
-            </div>
-
-            <div>
-              <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">
-                Bio
-              </p>
-              <p className="text-sm font-medium text-gray-800 dark:text-white/90">
-                Team Manager
-              </p>
-            </div>
-          </div>
+          <h2 className="text-xl font-semibold text-gray-800 dark:text-white">
+            {firstName} {lastName}
+          </h2>
+          <p className="text-sm text-gray-500">{user.email}</p>
         </div>
 
+        {/* EDIT BUTTON */}
         <button
           onClick={openModal}
           className="flex w-full items-center justify-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 hover:text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] dark:hover:text-gray-200 lg:inline-flex lg:w-auto"
@@ -90,100 +97,144 @@ export default function UserInfoCard() {
           </svg>
           Edit
         </button>
+
       </div>
 
-      <Modal isOpen={isOpen} onClose={closeModal} className="max-w-[700px] m-4">
-        <div className="no-scrollbar relative w-full max-w-[700px] overflow-y-auto rounded-3xl bg-white p-4 dark:bg-gray-900 lg:p-11">
-          <div className="px-2 pr-14">
-            <h4 className="mb-2 text-2xl font-semibold text-gray-800 dark:text-white/90">
-              Edit Personal Information
-            </h4>
-            <p className="mb-6 text-sm text-gray-500 dark:text-gray-400 lg:mb-7">
-              Update your details to keep your profile up-to-date.
-            </p>
+      {/* COMPANY ACCESS */}
+      <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-white">
+        Company Access
+      </h3>
+
+      <div className="space-y-6">
+
+        {groupCompanies(assignments).map((company: any, idx: number) => (
+
+          <div
+            key={idx}
+            className="border rounded-2xl p-5 bg-white dark:bg-gray-900 shadow-sm"
+          >
+
+            {/* COMPANY HEADER */}
+            <div className="flex justify-between items-start mb-4">
+
+              <h3 className="text-base font-semibold text-gray-800 dark:text-white">
+                🏢 {company.name}
+              </h3>
+
+              <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-600">
+                Active
+              </span>
+
+            </div>
+
+            {/* BUSINESSES */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+              {company.businesses.map((biz: any, i: number) => (
+
+                <div
+                  key={i}
+                  className="p-4 rounded-xl border bg-gray-50 dark:bg-gray-800"
+                >
+
+                  <p className="text-sm font-medium text-gray-800 dark:text-white">
+                    🏬 {biz.name}
+                  </p>
+
+                  <p className="text-xs text-gray-500 mt-1">
+                    Type: {biz.type || "branch"}
+                  </p>
+
+                  <p className="text-xs text-gray-500">
+                    📍 {biz.address || "No address"}
+                  </p>
+
+                  <p className="text-xs text-gray-500">
+                    Role: {biz.role}
+                  </p>
+
+                </div>
+
+              ))}
+
+            </div>
+
           </div>
-          <form className="flex flex-col">
-            <div className="custom-scrollbar h-[450px] overflow-y-auto px-2 pb-3">
-              <div>
-                <h5 className="mb-5 text-lg font-medium text-gray-800 dark:text-white/90 lg:mb-6">
-                  Social Links
-                </h5>
 
-                <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
-                  <div>
-                    <Label>Facebook</Label>
-                    <Input
-                      type="text"
-                      defaultValue="https://www.facebook.com/PimjoHQ"
-                    />
-                  </div>
+        ))}
 
-                  <div>
-                    <Label>X.com</Label>
-                    <Input type="text" defaultValue="https://x.com/PimjoHQ" />
-                  </div>
+      </div>
 
-                  <div>
-                    <Label>Linkedin</Label>
-                    <Input
-                      type="text"
-                      defaultValue="https://www.linkedin.com/company/pimjo"
-                    />
-                  </div>
+      {/* EDIT MODAL (OLD STYLE - SIMPLE USER FIELDS ONLY) */}
+      <Modal isOpen={isOpen} onClose={closeModal} className="max-w-[700px] m-4">
+        <div className="relative w-full p-4 overflow-y-auto bg-white no-scrollbar rounded-3xl dark:bg-gray-900 lg:p-11">
 
-                  <div>
-                    <Label>Instagram</Label>
-                    <Input
-                      type="text"
-                      defaultValue="https://instagram.com/PimjoHQ"
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="mt-7">
-                <h5 className="mb-5 text-lg font-medium text-gray-800 dark:text-white/90 lg:mb-6">
-                  Personal Information
-                </h5>
+          <h4 className="text-xl font-semibold mb-4">
+            Edit User
+          </h4>
 
-                <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
-                  <div className="col-span-2 lg:col-span-1">
-                    <Label>First Name</Label>
-                    <Input type="text" defaultValue="Musharof" />
-                  </div>
+          <div className="grid grid-cols-2 gap-4">
 
-                  <div className="col-span-2 lg:col-span-1">
-                    <Label>Last Name</Label>
-                    <Input type="text" defaultValue="Chowdhury" />
-                  </div>
-
-                  <div className="col-span-2 lg:col-span-1">
-                    <Label>Email Address</Label>
-                    <Input type="text" defaultValue="randomuser@pimjo.com" />
-                  </div>
-
-                  <div className="col-span-2 lg:col-span-1">
-                    <Label>Phone</Label>
-                    <Input type="text" defaultValue="+09 363 398 46" />
-                  </div>
-
-                  <div className="col-span-2">
-                    <Label>Bio</Label>
-                    <Input type="text" defaultValue="Team Manager" />
-                  </div>
-                </div>
-              </div>
+            <div>
+              <Label>First Name</Label>
+              <Input defaultValue={firstName} />
             </div>
-            <div className="flex items-center gap-3 px-2 mt-6 lg:justify-end">
-              <Button size="sm" variant="outline" onClick={closeModal}>
-                Close
-              </Button>
-              <Button size="sm" onClick={handleSave}>
-                Save Changes
-              </Button>
+
+            <div>
+              <Label>Last Name</Label>
+              <Input defaultValue={lastName} />
             </div>
-          </form>
+
+            <div className="col-span-2">
+              <Label>Email</Label>
+              <Input defaultValue={user.email} />
+            </div>
+
+          </div>
+
+          <div className="flex justify-end gap-2 mt-6">
+
+            <Button variant="outline" onClick={closeModal}>
+              Close
+            </Button>
+
+            <Button>
+              Save
+            </Button>
+
+          </div>
+
         </div>
+
       </Modal>
+
     </div>
   );
+}
+
+/* 🔥 YOUR ORIGINAL GROUPING (FIXED TYPE ONLY) */
+function groupCompanies(assignments: any[]) {
+  const map: Record<string, any> = {};
+
+  assignments.forEach((item: any) => {
+    if (!item.company) return;
+
+    if (!map[item.company]) {
+      map[item.company] = {
+        name: item.company,
+        status: item.company_status ?? true,
+        businesses: [],
+      };
+    }
+
+    map[item.company].businesses.push({
+      name: item.business,
+      type: item.business_type,
+      address: item.address,
+      role: item.role,
+      status: item.business_status ?? true,
+    });
+  });
+
+  return Object.values(map);
 }

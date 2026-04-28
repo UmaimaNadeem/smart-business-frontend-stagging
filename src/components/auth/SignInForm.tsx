@@ -45,10 +45,8 @@ export default function SignInForm() {
         return;
       }
 
-      // ✅ Set cookie for middleware
       document.cookie = `token=${data.access_token}; path=/;`;
 
-      // ✅ Redirect to dashboard
       router.push("/");
     } catch (err) {
       if (err instanceof Error) setError(err.message);
