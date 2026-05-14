@@ -3,6 +3,7 @@ import './globals.css';
 import "flatpickr/dist/flatpickr.css";
 import { SidebarProvider } from '@/context/SidebarContext';
 import { ThemeProvider } from '@/context/ThemeContext';
+import { Toaster } from "react-hot-toast";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -19,7 +20,15 @@ export default function RootLayout({
         <ThemeProvider>
           <SidebarProvider>{children}</SidebarProvider>
         </ThemeProvider>
-      </body>
+<Toaster
+  position="top-right"
+  containerStyle={{
+    top: 20,
+    right: 20,
+    zIndex: 999999,
+  }}
+/>
+              </body>
     </html>
   );
 }

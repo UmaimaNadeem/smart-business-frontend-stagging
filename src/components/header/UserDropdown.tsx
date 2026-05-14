@@ -118,12 +118,6 @@ export default function UserDropdown() {
               Edit profile
             </DropdownItem>
           </li>
-
-          <li>
-            <DropdownItem href="/settings" onItemClick={closeDropdown}>
-              Account settings
-            </DropdownItem>
-          </li>
         </ul>
 
         {/* Logout */}
