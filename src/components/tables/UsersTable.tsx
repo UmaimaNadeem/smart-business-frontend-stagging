@@ -1,7 +1,14 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
+import {
+  apiFetch,
+  extractList,
+  getToken,
+  getUserId,
+} from "@/lib/api";
+import { Business, Company, Role, UserRow } from "@/types/entities";
 import {
   Table,
   TableBody,
@@ -11,18 +18,8 @@ import {
 } from "../ui/table";
 
 import Badge from "../ui/badge/Badge";
+import ModalBackdrop from "../ui/modal/ModalBackdrop";
 import Image from "next/image";
-
-interface UserRow {
-  id: number;
-  name: string;
-  email: string;
-  password?: string;
-  image?: string;
-  roles?: string[];
-  companies?: string[];
-  businesses?: string[];
-}
 
 export default function UsersTable() {
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -35,56 +32,85 @@ export default function UsersTable() {
 
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
-  const getToken = () => {
-    if (typeof window === "undefined") return null;
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [businesses, setBusinesses] = useState<Business[]>([]);
 
-    const match = document.cookie.match(/(^| )token=([^;]+)/);
+  const [assignModal, setAssignModal] = useState(false);
+  const [assignUser, setAssignUser] = useState<UserRow | null>(null);
+  
+  const [assignData, setAssignData] = useState({
+    user_id: 0,
+    role_id: "",
+    company_id: "",
+    business_id: "",
+  });
+  const [assignOptionsLoading, setAssignOptionsLoading] = useState(false);
+  const [assigning, setAssigning] = useState(false);
 
-    return match ? match[2] : null;
-  };
-
-  const getUserId = () => {
-    if (typeof window === "undefined") return null;
-
-    const match = document.cookie.match(/(^| )user_id=([^;]+)/);
-
-    return match ? Number(match[2]) : null;
-  };
+  const filteredBusinesses = useMemo(() => {
+    if (!assignData.company_id) return businesses;
+    const companyId = Number(assignData.company_id);
+    const matched = businesses.filter((business) => {
+      const bizCompanyId =
+        business.company_id ??
+        (typeof business.company === "object" ? business.company?.id : undefined);
+      return Number(bizCompanyId) === companyId;
+    });
+    // If API omits company_id, fall back to full list so user can still assign
+    return matched.length > 0 ? matched : businesses;
+  }, [assignData.company_id, businesses]);
 
   useEffect(() => {
     setCurrentUserId(getUserId());
   }, []);
 
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const token = getToken();
+  const fetchUsers = useCallback(async () => {
+    try {
+      const token = getToken();
+      if (!token) return;
 
-        if (!token) return;
-
-        const res = await fetch(
-          "http://smart-business-backend-stagging.test/api/users",
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: "application/json",
-            },
-          }
-        );
-
-        const response = await res.json();
-
-        setUsers(response?.data?.users || []);
-      } catch (err) {
-        console.error(err);
-        setUsers([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchUsers();
+      const response = await apiFetch<{ data?: { users?: UserRow[] } }>(
+        "/api/users"
+      );
+      setUsers(response?.data?.users || []);
+    } catch (err) {
+      console.error(err);
+      setUsers([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  const loadAssignOptions = useCallback(async () => {
+    setAssignOptionsLoading(true);
+    try {
+      const [rolesRes, companiesRes, businessesRes] = await Promise.all([
+        apiFetch("/api/roles"),
+        apiFetch("/api/companies"),
+        apiFetch("/api/businesses"),
+      ]);
+
+      setRoles(extractList<Role>(rolesRes));
+      setCompanies(extractList<Company>(companiesRes));
+      setBusinesses(extractList<Business>(businessesRes));
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to load assignment options");
+    } finally {
+      setAssignOptionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (assignModal) {
+      loadAssignOptions();
+    }
+  }, [assignModal, loadAssignOptions]);
 
   // ================= DELETE API =================
   const deleteUser = async (id: number) => {
@@ -119,63 +145,106 @@ export default function UsersTable() {
   };
 
   // ================= CREATE / UPDATE API =================
-const updateUser = async () => {
-  if (!selectedUser) return;
+  const updateUser = async () => {
+    if (!selectedUser) return;
 
-  try {
-    const token = getToken();
-    const isNew = selectedUser.id === 0;
+    try {
+      const token = getToken();
+      const isNew = selectedUser.id === 0;
 
-    const payload: any = {
-      name: selectedUser.name,
-      email: selectedUser.email,
-    };
+      const payload: any = {
+        name: selectedUser.name,
+        email: selectedUser.email,
+      };
 
-    if (selectedUser.password) {
-      payload.password = selectedUser.password;
-    }
-
-    const res = await fetch(
-      isNew
-        ? "http://smart-business-backend-stagging.test/api/users/create"
-        : `http://smart-business-backend-stagging.test/api/users/update/${selectedUser.id}`,
-      {
-        method: isNew ? "POST" : "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(payload),
+      if (selectedUser.password) {
+        payload.password = selectedUser.password;
       }
-    );
 
-    if (res.ok) {
-      const data = await res.json();
+      const res = await fetch(
+        isNew
+          ? "http://smart-business-backend-stagging.test/api/users/create"
+          : `http://smart-business-backend-stagging.test/api/users/update/${selectedUser.id}`,
+        {
+          method: isNew ? "POST" : "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
 
-      if (isNew) {
-        setUsers((prev) => [...prev, data.data.user]);
-        toast.success("User created successfully");
+      if (res.ok) {
+        const data = await res.json();
+
+        if (isNew) {
+          setUsers((prev) => [
+            ...prev,
+            {
+              ...data.data,
+              roles: ["Not Assigned"],
+              companies: ["Not Assigned"],
+              businesses: ["Not Assigned"],
+            },
+          ]);
+          toast.success("User created successfully");
+        } else {
+          setUsers((prev) =>
+            prev.map((u) =>
+              u.id === selectedUser.id ? { ...u, ...selectedUser } : u
+            )
+          );
+          toast.success("User updated successfully");
+        }
+
+        setSelectedUser(null);
+        setMode(null);
       } else {
-        setUsers((prev) =>
-          prev.map((u) =>
-            u.id === selectedUser.id ? { ...u, ...selectedUser } : u
-          )
-        );
-        toast.success("User updated successfully");
+        toast.error("Operation failed");
       }
-
-      setSelectedUser(null);
-      setMode(null);
-    } else {
-      toast.error("Operation failed");
+    } catch (error) {
+      console.error(error);
+      toast.error("Something went wrong");
     }
-  } catch (error) {
-    console.error(error);
-    toast.error("Something went wrong");
-  }
-};
+  };
+  const assignRole = async () => {
+    const roleId = Number(assignData.role_id);
+    const companyId = Number(assignData.company_id);
+    const businessId = Number(assignData.business_id);
 
+    if (!roleId || !companyId || !businessId) {
+      toast.error("Please select a role, company, and business");
+      return;
+    }
+
+    setAssigning(true);
+    try {
+      await apiFetch("/api/roles/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: assignData.user_id,
+          role_id: roleId,
+          company_id: companyId,
+          business_id: businessId,
+        }),
+      });
+
+      toast.success("Access assigned successfully");
+      setAssignModal(false);
+      setAssignUser(null);
+      await fetchUsers();
+    } catch (error) {
+      console.error(error);
+      toast.error(
+        error instanceof Error ? error.message : "Assignment failed"
+      );
+    } finally {
+      setAssigning(false);
+    }
+  };
   if (loading) {
     return <p className="p-5">Loading users...</p>;
   }
@@ -187,13 +256,13 @@ const updateUser = async () => {
         <button
           onClick={() => {
             setSelectedUser({
-  id: 0,
-  name: "",
-  email: "",
-  password: "",
-  companies: [],
-  businesses: [],
-});
+              id: 0,
+              name: "",
+              email: "",
+              password: "",
+              companies: [],
+              businesses: [],
+            });
 
             setMode("edit");
           }}
@@ -202,7 +271,7 @@ const updateUser = async () => {
           + Add New User
         </button>
       </div>
-
+      
       {/* ================= TABLE ================= */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/[0.05] dark:bg-white/[0.03]">
         <div className="max-w-full overflow-x-auto">
@@ -289,6 +358,23 @@ const updateUser = async () => {
                     <TableCell className="px-5 py-4">
                       <div className="flex gap-2">
                         <button
+  onClick={() => {
+    setAssignUser(user);
+
+    setAssignData({
+      user_id: user.id,
+      role_id: "",
+      company_id: "",
+      business_id: "",
+    });
+
+    setAssignModal(true);
+  }}
+  className="px-3 py-1 rounded bg-purple-100 text-purple-700 text-xs"
+>
+  Assign
+</button>
+                        <button
                           onClick={() => {
                             setSelectedUser(user);
                             setMode("view");
@@ -328,113 +414,264 @@ const updateUser = async () => {
 
       {/* ================= VIEW / EDIT MODAL ================= */}
       {selectedUser && mode && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-900 w-[600px] max-h-[80vh] overflow-y-auto rounded-2xl p-6">
+        <ModalBackdrop
+          onClose={() => {
+            setSelectedUser(null);
+            setMode(null);
+          }}
+        >
+          <div className="mx-auto bg-white dark:bg-gray-900 w-full max-w-2xl rounded-2xl shadow-2xl">
             {/* HEADER */}
-            <div className="flex items-center gap-3 mb-5">
-              <Image
-                src={selectedUser.image || "/images/user/owner.jpg"}
-                width={55}
-                height={55}
-                className="rounded-full"
-                alt="user"
-              />
+            <div className="sticky top-0 z-10 border-b bg-white px-6 py-5 dark:bg-gray-900 dark:border-gray-800">
+              <div className="flex items-center gap-4">
+                <Image
+                  src={selectedUser.image || "/images/user/owner.jpg"}
+                  width={56}
+                  height={56}
+                  className="rounded-full"
+                  alt="user"
+                />
 
-              <div className="w-full">
-                <h2 className="text-lg font-semibold text-gray-800 dark:text-white">
-                  {mode === "view"
-                    ? "User Details"
-                    : selectedUser.id === 0
-                    ? "Add User"
-                    : "Edit User"}
-                </h2>
+                <div className="w-full min-w-0">
+                  <h2 className="text-xl font-semibold text-gray-800 dark:text-white">
+                    {mode === "view"
+                      ? "User Details"
+                      : selectedUser.id === 0
+                        ? "Add User"
+                        : "Edit User"}
+                  </h2>
 
-                {mode === "view" ? (
-                  <p className="text-sm text-gray-500">
-                    {selectedUser.name} • {selectedUser.email}
-                  </p>
-                ) : (
-                  <div className="space-y-2 mt-3">
-                    <input
-                      className="w-full border p-2 rounded"
-                      placeholder="Enter name"
-                      value={selectedUser.name}
-                      onChange={(e) =>
-                        setSelectedUser({
-                          ...selectedUser,
-                          name: e.target.value,
-                        })
-                      }
-                    />
+                  {mode === "view" ? (
+                    <div>
+                      <p className="font-medium text-gray-800 dark:text-white/90 truncate">
+                        {selectedUser.name}
+                      </p>
+                      <p className="text-sm text-gray-500 truncate">
+                        {selectedUser.email}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 mt-3">
+                      <input
+                        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white outline-none"
+                        placeholder="Enter name"
+                        value={selectedUser.name}
+                        onChange={(e) =>
+                          setSelectedUser({
+                            ...selectedUser,
+                            name: e.target.value,
+                          })
+                        }
+                      />
 
-                    <input
-                      className="w-full border p-2 rounded"
-                      placeholder="Enter email"
-                      value={selectedUser.email}
-                      onChange={(e) =>
-                        setSelectedUser({
-                          ...selectedUser,
-                          email: e.target.value,
-                        })
-                      }
-                    />
-                    <input
-  className="w-full border p-2 rounded"
-  placeholder="Enter password"
-  type="password"
-  value={selectedUser.password || ""}
-  onChange={(e) =>
-    setSelectedUser({
-      ...selectedUser,
-      password: e.target.value,
-    })
-  }
-/>
-                  </div>
-                )}
+                      <input
+                        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white outline-none"
+                        placeholder="Enter email"
+                        value={selectedUser.email}
+                        onChange={(e) =>
+                          setSelectedUser({
+                            ...selectedUser,
+                            email: e.target.value,
+                          })
+                        }
+                      />
+                      <input
+                        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white outline-none"
+                        placeholder="Enter password"
+                        type="password"
+                        value={selectedUser.password || ""}
+                        onChange={(e) =>
+                          setSelectedUser({
+                            ...selectedUser,
+                            password: e.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
-            {/* COMPANIES + BUSINESSES */}
+            <div className="px-6 py-5">
+
+            {/* ACCESS STRUCTURE */}
             {mode === "view" && (
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                  Companies & Businesses
-                </h3>
+              <div className="space-y-5">
+                <div>
+                  <p className="text-xs uppercase text-gray-400 mb-2">All Roles</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[...new Set(selectedUser.roles || [])].length ? (
+                      [...new Set(selectedUser.roles || [])].map((role) => (
+                        <Badge key={role} size="sm" color="success">
+                          {role}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-sm text-gray-500">No roles assigned</span>
+                    )}
+                  </div>
+                </div>
 
-                {selectedUser.companies?.length ? (
-                  selectedUser.companies.map((company, i) => (
-                    <div
-                      key={i}
-                      className="border rounded-xl p-3 bg-gray-50 dark:bg-gray-800"
-                    >
-                      <p className="font-medium text-gray-800 dark:text-white">
-                        🏢 {company}
-                      </p>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                    Companies & Businesses
+                  </h3>
 
-                      <p className="text-xs text-gray-500 mt-1">
-                        🏬{" "}
-                        {selectedUser.businesses?.[i] ||
-                          "No business assigned"}
-                      </p>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-sm text-gray-500">
-                    No companies assigned
-                  </p>
-                )}
+                  {(() => {
+                    type Grouped = {
+                      name: string;
+                      businesses: {
+                        name: string;
+                        type?: string;
+                        address?: string;
+                        roles: string[];
+                      }[];
+                    };
+
+                    let grouped: Grouped[] = [];
+
+                    if (selectedUser.assignments?.length) {
+                      const map: Record<string, Grouped> = {};
+                      selectedUser.assignments.forEach((item) => {
+                        const companyName = item.company || "Unknown Company";
+                        if (!map[companyName]) {
+                          map[companyName] = { name: companyName, businesses: [] };
+                        }
+                        const bizName = item.business || "Unnamed business";
+                        const existing = map[companyName].businesses.find(
+                          (b) => b.name === bizName
+                        );
+                        const roleList = [
+                          ...(item.roles || []),
+                          ...(item.role ? [item.role] : []),
+                        ];
+                        if (existing) {
+                          existing.roles = [
+                            ...new Set([...existing.roles, ...roleList]),
+                          ];
+                        } else {
+                          map[companyName].businesses.push({
+                            name: bizName,
+                            type: item.business_type,
+                            address: item.address,
+                            roles: [...new Set(roleList)],
+                          });
+                        }
+                      });
+                      grouped = Object.values(map);
+                    } else {
+                      const map: Record<string, Grouped> = {};
+                      (selectedUser.companies || []).forEach((company, i) => {
+                        if (!map[company]) {
+                          map[company] = { name: company, businesses: [] };
+                        }
+                        const biz = selectedUser.businesses?.[i];
+                        if (
+                          biz &&
+                          !map[company].businesses.some((b) => b.name === biz)
+                        ) {
+                          map[company].businesses.push({
+                            name: biz,
+                            roles: [],
+                          });
+                        }
+                      });
+                      grouped = Object.values(map);
+                    }
+
+                    if (!grouped.length) {
+                      return (
+                        <p className="text-sm text-gray-500 py-4 text-center">
+                          No companies or businesses assigned
+                        </p>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-4">
+                        {grouped.map((company) => (
+                          <div
+                            key={company.name}
+                            className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"
+                          >
+                            <div className="flex items-start justify-between gap-2 mb-3">
+                              <div>
+                                <p className="font-medium text-gray-800 dark:text-white">
+                                  {company.name}
+                                </p>
+                                <p className="text-xs text-gray-500 mt-0.5">
+                                  {company.businesses.length} business
+                                  {company.businesses.length === 1 ? "" : "es"}
+                                </p>
+                              </div>
+                              <Badge size="sm" color="success">
+                                Active
+                              </Badge>
+                            </div>
+
+                            {company.businesses.length === 0 ? (
+                              <p className="text-xs text-gray-400">
+                                No businesses under this company
+                              </p>
+                            ) : (
+                              <div className="space-y-2">
+                                {company.businesses.map((biz) => (
+                                  <div
+                                    key={`${company.name}-${biz.name}`}
+                                    className="rounded-lg bg-gray-50 px-3 py-2.5 dark:bg-gray-800/60"
+                                  >
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                      <div>
+                                        <p className="text-sm font-medium text-gray-800 dark:text-white">
+                                          {biz.name}
+                                        </p>
+                                        <p className="text-xs text-gray-500 mt-0.5">
+                                          {biz.type || "branch"}
+                                          {biz.address ? ` · ${biz.address}` : ""}
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-wrap gap-1 justify-end">
+                                        {(biz.roles.length
+                                          ? biz.roles
+                                          : selectedUser.roles || []
+                                        )
+                                          .filter(
+                                            (r, i, arr) => arr.indexOf(r) === i
+                                          )
+                                          .map((role) => (
+                                            <Badge
+                                              key={role}
+                                              size="sm"
+                                              color="primary"
+                                            >
+                                              {role}
+                                            </Badge>
+                                          ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             )}
+            </div>
 
             {/* ACTIONS */}
-            <div className="flex justify-end gap-2 mt-6">
+            <div className="sticky bottom-0 flex justify-end gap-2 border-t bg-white px-6 py-4 dark:bg-gray-900 dark:border-gray-800">
               <button
                 onClick={() => {
                   setSelectedUser(null);
                   setMode(null);
                 }}
-                className="px-4 py-2 bg-gray-200 rounded"
+                className="px-4 py-2 rounded-xl border text-sm hover:bg-gray-50 dark:hover:bg-gray-800"
               >
                 Close
               </button>
@@ -442,22 +679,20 @@ const updateUser = async () => {
               {mode === "edit" && (
                 <button
                   onClick={updateUser}
-                  className="px-4 py-2 bg-green-500 text-white rounded"
+                  className="px-4 py-2 rounded-xl bg-brand-500 text-white text-sm hover:bg-brand-600"
                 >
-                  {selectedUser.id === 0
-                    ? "Create User"
-                    : "Save Changes"}
+                  {selectedUser.id === 0 ? "Create User" : "Save Changes"}
                 </button>
               )}
             </div>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
 
       {/* ================= DELETE MODAL ================= */}
       {deleteId && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-900 p-6 rounded-2xl w-[420px]">
+        <ModalBackdrop onClose={() => setDeleteId(null)}>
+          <div className="mx-auto bg-white dark:bg-gray-900 p-6 rounded-2xl w-full max-w-[420px] shadow-2xl">
             <h2 className="text-lg font-semibold mb-2 text-gray-800 dark:text-white">
               Delete User
             </h2>
@@ -482,7 +717,196 @@ const updateUser = async () => {
               </button>
             </div>
           </div>
+        </ModalBackdrop>
+      )}
+
+      {assignModal && assignUser && (
+        <ModalBackdrop
+          onClose={() => {
+            setAssignUser(null);
+            setAssignModal(false);
+          }}
+        >
+          <div className="mx-auto w-full max-w-xl rounded-2xl bg-white dark:bg-gray-900 shadow-2xl">
+
+      {/* Header */}
+      <div className="flex items-center justify-between border-b px-6 py-5">
+        <div>
+          <h2 className="text-xl font-semibold">
+            Assign Access
+          </h2>
+
+          <p className="text-sm text-gray-500">
+            Assign role, company and business to this user.
+          </p>
         </div>
+
+        <button
+          onClick={() => {
+            setAssignUser(null);
+            setAssignModal(false);
+          }}
+          className="rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* User */}
+      <div className="flex items-center gap-4 px-6 py-5">
+
+        <Image
+          src="/images/user/owner.jpg"
+          width={60}
+          height={60}
+          className="rounded-full"
+          alt="user"
+        />
+
+        <div>
+
+          <h3 className="font-semibold text-lg">
+            {assignUser.name}
+          </h3>
+
+          <p className="text-sm text-gray-500">
+            {assignUser.email}
+          </p>
+
+        </div>
+
+      </div>
+
+      {/* Form */}
+      <div className="space-y-5 px-6 pb-6">
+
+        {/* Role */}
+        <div>
+
+          <label className="mb-2 block text-sm font-medium">
+            Role
+          </label>
+
+          <select
+            className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white outline-none disabled:opacity-60"
+            value={assignData.role_id}
+            disabled={assignOptionsLoading}
+            onChange={(e) =>
+              setAssignData((prev) => ({ ...prev, role_id: e.target.value }))
+            }
+          >
+            <option value="">
+              {assignOptionsLoading ? "Loading roles..." : "Select Role"}
+            </option>
+
+            {roles.map((role) => (
+              <option key={role.id} value={String(role.id)}>
+                {role.name}
+              </option>
+            ))}
+          </select>
+
+        </div>
+
+        {/* Company */}
+
+        <div>
+
+          <label className="mb-2 block text-sm font-medium">
+            Company
+          </label>
+
+          <select
+            className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white outline-none disabled:opacity-60"
+            value={assignData.company_id}
+            disabled={assignOptionsLoading}
+            onChange={(e) =>
+              setAssignData((prev) => ({
+                ...prev,
+                company_id: e.target.value,
+                business_id: "",
+              }))
+            }
+          >
+            <option value="">
+              {assignOptionsLoading ? "Loading companies..." : "Select Company"}
+            </option>
+
+            {companies.map((company) => (
+              <option key={company.id} value={String(company.id)}>
+                {company.name}
+              </option>
+            ))}
+          </select>
+
+        </div>
+
+        {/* Business */}
+
+        <div>
+
+          <label className="mb-2 block text-sm font-medium">
+            Business
+          </label>
+
+          <select
+            className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-white outline-none disabled:opacity-60"
+            value={assignData.business_id}
+            disabled={assignOptionsLoading || !assignData.company_id}
+            onChange={(e) =>
+              setAssignData((prev) => ({
+                ...prev,
+                business_id: e.target.value,
+              }))
+            }
+          >
+            <option value="">
+              {!assignData.company_id
+                ? "Select a company first"
+                : assignOptionsLoading
+                  ? "Loading businesses..."
+                  : filteredBusinesses.length === 0
+                    ? "No businesses available"
+                    : "Select Business"}
+            </option>
+
+            {filteredBusinesses.map((business) => (
+              <option key={business.id} value={String(business.id)}>
+                {business.name}
+              </option>
+            ))}
+          </select>
+
+        </div>
+
+      </div>
+
+      {/* Footer */}
+
+      <div className="flex justify-end gap-3 border-t px-6 py-5">
+
+        <button
+          onClick={() => {
+            setAssignUser(null);
+            setAssignModal(false);
+          }}
+          className="rounded-xl border px-5 py-2.5 hover:bg-gray-100"
+        >
+          Cancel
+        </button>
+
+        <button
+          onClick={assignRole}
+          disabled={assigning || assignOptionsLoading}
+          className="rounded-xl bg-brand-500 px-6 py-2.5 font-medium text-white hover:bg-brand-600 disabled:opacity-60"
+        >
+          {assigning ? "Assigning..." : "Assign Access"}
+        </button>
+
+      </div>
+
+          </div>
+        </ModalBackdrop>
       )}
     </>
   );

@@ -11,11 +11,7 @@ import {
   GridIcon,
   HorizontaLDots,
   ListIcon,
-  PageIcon,
-  PieChartIcon,
-  PlugInIcon,
-  TableIcon,
-  UserCircleIcon,
+  BoxIcon,
 } from "../icons/index";
 import SidebarWidget from "./SidebarWidget";
 
@@ -31,11 +27,30 @@ const navItems: NavItem[] = [
     icon: <GridIcon />,
     name: "Dashboard",
     subItems: [{ name: "Ecommerce", path: "/", pro: false }],
-  },  
+  },
   {
-    name: "Users",
+    icon: <BoxCubeIcon />,
+    name: "Organization",
+    subItems: [
+      { name: "Companies", path: "/companies", pro: false },
+      { name: "Businesses", path: "/businesses", pro: false },
+    ],
+  },
+  {
     icon: <ListIcon />,
-    path: "/users",
+    name: "Access Control",
+    subItems: [
+      { name: "Users", path: "/users", pro: false },
+      { name: "Roles", path: "/roles", pro: false },
+    ],
+  },
+  {
+    icon: <BoxIcon />,
+    name: "Inventory",
+    subItems: [
+      { name: "Products", path: "/products", pro: false },
+      { name: "Purchases", path: "/purchases", pro: false },
+    ],
   },
 ];
 
@@ -271,7 +286,7 @@ const AppSidebar: React.FC = () => {
 
   return (
     <aside
-      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 px-5 left-0 bg-white dark:bg-gray-900 dark:border-gray-800 text-gray-900 h-screen transition-all duration-300 ease-in-out z-50 border-r border-gray-200 
+      className={`fixed mt-16 flex flex-col lg:mt-0 top-0 px-5 left-0 bg-white dark:bg-gray-900 text-gray-900 h-screen transition-all duration-300 ease-in-out z-[99998] border-r border-gray-200 dark:border-gray-800 shadow-sm
         ${
           isExpanded || isMobileOpen
             ? "w-[290px]"
