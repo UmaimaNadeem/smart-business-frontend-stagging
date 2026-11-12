@@ -1,6 +1,5 @@
 "use client";
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { USE_MOCK } from "@/lib/config";
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -103,9 +102,8 @@ export function DocForm({ kind, id }: { kind: DocKind; id?: string }) {
       <Card title="Details">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FieldWrap label={m.party === "supplier" ? "Supplier" : "Customer"} required error={err(`${m.party}_id`)}>
-            {!USE_MOCK && kind === "purchase"
-              ? <input type="number" min={1} placeholder="Supplier ID in the backend suppliers table" className={inputCls} value={head[`${m.party}_id`]} onChange={set(`${m.party}_id`)} />
-              : <select className={inputCls} value={head[`${m.party}_id`]} onChange={set(`${m.party}_id`)}><option value="">Select…</option>{parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
+            {/* The backend now has /suppliers and /customers, so both modes pick from the list. */}
+            <select className={inputCls} value={head[`${m.party}_id`]} onChange={set(`${m.party}_id`)}><option value="">Select…</option>{parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
           </FieldWrap>
           <FieldWrap label="Date" required error={err(m.dateKey)}><input type="date" className={inputCls} value={head[m.dateKey]} onChange={set(m.dateKey)} /></FieldWrap>
           {kind === "purchase"

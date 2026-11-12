@@ -3,28 +3,31 @@ import React, { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useSidebar } from "@/context/SidebarContext";
 import { useAuth } from "@/context/AuthContext";
+import { getToken } from "@/lib/api/session";
 import AppHeader from "@/layout/AppHeader";
 import AppSidebar from "@/layout/AppSidebar";
 import Backdrop from "@/layout/Backdrop";
 import SubscriptionBanner from "@/components/sb/SubscriptionBanner";
+import ApiStatusBanner, { ApiUnreachable } from "@/components/sb/ApiStatusBanner";
 import { Loading } from "@/components/sb/ui";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { isExpanded, isHovered, isMobileOpen } = useSidebar();
-  const { me, loading, hasCompany, company, can } = useAuth();
+  const { me, loading, hasCompany, company, can, apiError, retryApi, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   const redirect = loading ? null
-    : !me ? "/signin"
-    : !me.email_verified ? "/verify-email"
-    : company && company.onboarding_completed_at === null && can("company.manage") ? "/onboarding"
-    : !hasCompany && me.is_platform_admin && !pathname.startsWith("/platform") && pathname !== "/profile" ? "/platform/tenants"
+    : !me && !getToken() ? "/signin"
+    : me && !me.email_verified ? "/verify-email"
+    : me && company && company.onboarding_completed_at === null && can("company.manage") ? "/onboarding"
+    : me && !hasCompany && me.is_platform_admin && !pathname.startsWith("/platform") && pathname !== "/profile" ? "/platform/tenants"
     : null;
 
   useEffect(() => { if (redirect) router.replace(redirect); }, [redirect, router]);
 
   if (loading || redirect) return <div className="flex min-h-screen items-center justify-center"><Loading /></div>;
+  if (!me) return <ApiUnreachable onRetry={() => void retryApi()} onSignOut={() => void logout()} />;
 
   const margin = isMobileOpen ? "ml-0" : isExpanded || isHovered ? "lg:ml-[290px]" : "lg:ml-[90px]";
   return (
@@ -40,7 +43,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <p className="mt-2 text-sm text-gray-500">You are not assigned to any company. Ask your administrator for an invitation.</p>
             </div>
           ) : (
-            <>{hasCompany && <SubscriptionBanner />}{children}</>
+            <>{hasCompany && <SubscriptionBanner />}<ApiStatusBanner />{children}</>
           )}
         </div>
       </div>

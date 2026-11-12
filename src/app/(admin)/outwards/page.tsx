@@ -33,7 +33,7 @@ function Outwards() {
   };
   const markDelivered = async () => {
     setBusy(deliver.id);
-    try { const r = await api.post<{ message: string }>(`/sales/outwards/${deliver.id}/delivered`, { received_by: receivedBy }); toast.success(r.message); setDeliver(null); reload(); }
+    try { const r = await api.post<{ message: string }>(`/sales/outwards/${deliver.id}/delivered`, { received_by: receivedBy }, { headers: { "Idempotency-Key": newIdempotencyKey() } }); toast.success(r.message); setDeliver(null); reload(); }
     catch (e) { toast.error(errorMessage(e)); } finally { setBusy(null); }
   };
 

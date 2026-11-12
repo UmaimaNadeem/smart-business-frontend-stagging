@@ -1,5 +1,4 @@
 "use client";
-import { USE_MOCK } from "@/lib/config";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
@@ -65,11 +64,9 @@ export default function OnboardingPage() {
         let branchId = branch?.id;
         if (branch) await api.put(`/businesses/update/${branch.id}`, { name: f.branch_name, address: f.branch_address, company_id: company.id });
         else branchId = unwrap<{ id: number }>(await api.post("/businesses/create", { name: f.branch_name, address: f.branch_address, company_id: company.id, type: "branch" })).id;
-        // Warehouses and onboarding/complete are mock-only endpoints until the backend adds them.
-        try {
-          if (extractList(await api.get("/warehouses")).length === 0) await api.post("/warehouses", { name: f.warehouse_name, location: f.warehouse_location, business_id: branchId });
-          await api.post("/onboarding/complete");
-        } catch (e) { if (USE_MOCK) throw e; }
+        // The Laravel backend implements /warehouses and /onboarding/complete, so errors are shown in every mode.
+        if (extractList(await api.get("/warehouses")).length === 0) await api.post("/warehouses", { name: f.warehouse_name, location: f.warehouse_location, business_id: branchId });
+        await api.post("/onboarding/complete");
         await refresh();
         toast.success("Welcome to Smart Business!");
         router.replace("/");

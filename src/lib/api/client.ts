@@ -42,11 +42,103 @@ function buildQuery(query?: RequestOptions["query"]) {
   return s ? `?${s}` : "";
 }
 
+/* ------------------------------------------------------------------ live reachability */
+
+/** Fail fast instead of hanging when Laravel/DNS does not respond. */
+const LIVE_TIMEOUT_MS = 5000;
+/** After a timeout, skip live calls for this long so every click is not another 5s wait. */
+const CIRCUIT_COOLDOWN_MS = 15000;
+/** Reuse identical GET responses briefly (auth bootstrap hits /user and /businesses more than once). */
+const GET_CACHE_MS = 8000;
+
+let circuitOpenUntil = 0;
+const getCache = new Map<string, { at: number; value: unknown }>();
+const inflight = new Map<string, Promise<unknown>>();
+
+export type LiveStatus = { ok: boolean; url: string; message: string | null };
+let liveStatus: LiveStatus = { ok: true, url: API_URL, message: null };
+const liveListeners = new Set<(s: LiveStatus) => void>();
+
+export function getLiveStatus() {
+  return liveStatus;
+}
+export function onLiveStatus(fn: (s: LiveStatus) => void) {
+  liveListeners.add(fn);
+  fn(liveStatus);
+  return () => liveListeners.delete(fn);
+}
+function setLiveStatus(ok: boolean, message: string | null = null) {
+  liveStatus = { ok, url: API_URL, message };
+  liveListeners.forEach((fn) => fn(liveStatus));
+}
+
+/** Call before a manual retry so the next request hits Laravel immediately. */
+export function resetLiveCircuit() {
+  circuitOpenUntil = 0;
+  getCache.clear();
+  setLiveStatus(true, null);
+}
+
+function cacheKey(method: string, path: string, query?: RequestOptions["query"], tenant?: boolean) {
+  const ws = tenant === false ? "" : `${getWorkspace().companyId}:${getWorkspace().businessId}`;
+  return `${method} ${path}${buildQuery(query)}|${ws}`;
+}
+
+function networkError() {
+  return new ApiError(
+    0,
+    `Cannot reach the API at ${API_URL}. Check that Laravel is running, or set NEXT_PUBLIC_USE_MOCK=true for a full demo.`,
+  );
+}
+
+async function liveFetch(method: HttpMethod, url: string, headers: Record<string, string>, reqBody: unknown): Promise<Response> {
+  if (Date.now() < circuitOpenUntil) throw networkError();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LIVE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_URL}${url}`, {
+      method,
+      headers,
+      body: reqBody !== undefined ? JSON.stringify(reqBody) : undefined,
+      signal: ctrl.signal,
+    });
+    circuitOpenUntil = 0;
+    if (!liveStatus.ok) setLiveStatus(true, null);
+    return response;
+  } catch (err) {
+    circuitOpenUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
+    setLiveStatus(false, networkError().message);
+    if (err instanceof ApiError) throw err;
+    throw networkError();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * The single entry point for every backend call.
  * `path` is the Laravel route WITHOUT the `/api` prefix, e.g. `/products/create`.
  */
 export async function request<T = unknown>(method: HttpMethod, path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
+  const { auth = true, tenant = true } = opts;
+  if (method === "GET") {
+    const key = cacheKey(method, path, opts.query, tenant);
+    const cached = getCache.get(key);
+    if (cached && Date.now() - cached.at < GET_CACHE_MS) return cached.value as T;
+    const pending = inflight.get(key);
+    if (pending) return pending as Promise<T>;
+    const promise = requestInner<T>(method, path, body, opts).then((value) => {
+      getCache.set(key, { at: Date.now(), value });
+      return value;
+    }).finally(() => inflight.delete(key));
+    inflight.set(key, promise);
+    return promise;
+  }
+  getCache.clear();
+  return requestInner<T>(method, path, body, opts);
+}
+
+async function requestInner<T = unknown>(method: HttpMethod, path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
   const { auth = true, tenant = true } = opts;
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -64,14 +156,18 @@ export async function request<T = unknown>(method: HttpMethod, path: string, bod
     if (ws.businessId) headers["X-Business-ID"] = String(ws.businessId);
   }
 
-  // Decide per call: full mock, live Laravel, or (hybrid) live only for routes the backend has.
+  // Decide per call: full mock, live Laravel, or (hybrid) live for every route the backend has (routing.ts).
   let m = method, p = path, reqBody = body;
   let pattern: string | null = null;
   let target: "mock" | "live" = "mock";
   if (API_MODE !== "mock") {
-    const alias = liveAlias(m, p.split("?")[0], reqBody);
-    if (alias) ({ method: m, path: p, body: reqBody } = alias);
     pattern = liveRoute(m, p.split("?")[0]);
+    if (!pattern) {
+      // Only rewrite paths the backend does not implement; never touch a real Laravel route.
+      const alias = liveAlias(m, p.split("?")[0], reqBody);
+      if (alias) ({ method: m, path: p, body: reqBody } = alias);
+      pattern = alias ? liveRoute(m, p.split("?")[0]) : null;
+    }
     target = API_MODE === "live" || pattern ? "live" : "mock";
   }
   const url = `/api${p}${buildQuery(opts.query)}`;
@@ -88,15 +184,17 @@ export async function request<T = unknown>(method: HttpMethod, path: string, bod
   } else {
     let response: Response;
     try {
-      response = await fetch(`${API_URL}${url}`, { method: m, headers, body: reqBody !== undefined ? JSON.stringify(reqBody) : undefined });
-    } catch {
-      throw new ApiError(0, "Cannot reach the server. Check your connection or NEXT_PUBLIC_API_URL.");
+      response = await liveFetch(m, url, headers, reqBody);
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      throw networkError();
     }
     const json = await response.json().catch(() => ({}));
     res = { status: response.status, body: json };
     if (res.status >= 200 && res.status < 300 && pattern) {
       res.body = await adaptLive(m, pattern, res.body, (lp, q) => request("GET", lp, undefined, { ...opts, query: q }));
-      if (API_MODE === "hybrid" && m === "GET" && pattern.startsWith("/products/")) {
+      // Keep the hybrid mock's product copy current for any module still served by the mock (lists only).
+      if (API_MODE === "hybrid" && m === "GET" && (pattern === "/products/all" || pattern === "/products/business/:businessId")) {
         const { mirrorProducts } = await import("@/lib/mock/server");
         mirrorProducts(getWorkspace().companyId ?? null, extractList(res.body));
       }

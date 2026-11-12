@@ -22,6 +22,10 @@ export class ApiError extends Error {
   get isValidation() {
     return this.status === 422;
   }
+
+  get isNetwork() {
+    return this.status === 0;
+  }
 }
 
 export function errorMessage(err: unknown, fallback = "Something went wrong"): string {
@@ -34,4 +38,9 @@ export function errorMessage(err: unknown, fallback = "Something went wrong"): s
   }
   if (err instanceof Error) return err.message || fallback;
   return fallback;
+}
+
+/** True when the Laravel API could not be reached (timeout, DNS, or connection). */
+export function isNetworkError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 0;
 }

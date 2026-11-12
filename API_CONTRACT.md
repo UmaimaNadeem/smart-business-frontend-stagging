@@ -8,58 +8,46 @@ Lists return `{items, total}` (new endpoints) or the existing keyed shapes (`{pr
 ## Frontend API modes (`NEXT_PUBLIC_USE_MOCK`)
 | Value | What happens |
 |---|---|
-| `hybrid` (**default**, also when unset) | Endpoints that already exist in `backend/routes/api.php` call the real Laravel API at `NEXT_PUBLIC_API_URL`, so real login, signup, users, roles, companies, branches, invitations, products, purchases, sales and inwards/outwards all use Laravel. Modules the backend doesn't have yet are served by the in-browser mock. |
-| `true` | Full mock with demo data. **The demo accounts below only work in this mode.** |
-| `false` | Everything goes to Laravel. Modules without a backend API return 404. |
+| `false` (**default**, also when unset) | Everything goes to the Laravel 12 backend at `NEXT_PUBLIC_API_URL`. The backend now implements every MVP module, so this is the normal setting. |
+| `hybrid` | Every endpoint the backend implements (the full list in `src/lib/api/routing.ts`, generated from `php artisan route:list --path=api`) goes to Laravel. Only a path that is not in that list falls back to the in-browser mock. With the current backend this behaves the same as `false`. |
+| `true` | Full offline mock with demo data. **The `Demo@1234` demo accounts only work in this mode.** |
 
 To switch modes, set the value in `.env.local` and restart `npm run dev`, or rebuild. The value is inlined at build time.
 
-**Live in hybrid**, per `src/lib/api/routing.ts`:
-- `/register`, `/login`, `/password/*`, `/email/*`, `/auth/logout*`, `/user`
-- `/invitations*`, `/platform/companies`, `/platform/users`
-- `/companies*`, `/businesses*`, `/users*`, `/roles*`, `/business-members*`
-- `/products/{all, business/:id, create, update/:id, delete/:id, :id/increase-stock, :id/decrease-stock, business/:id/low-stock}`
-- `/purchases*`, `/purchases/inwards/{pending, :id, :id/tally}`
-- `/sales*`, `/sales/outwards/{pending, :id, :id/dispatch, :id/delivered}`
+**Logins against the new backend** (`false` or `hybrid`, after `php artisan migrate:fresh --seed`), password `Password123!`:
+- `admin@smartbusiness.test` (platform admin)
+- `owner@metrotraders.test` (company owner, about six months of demo data; start here)
+- `manager@metrotraders.test`, `sales@metrotraders.test` (Lahore branch only), `warehouse@metrotraders.test`
+- `owner@northwind.test` (second company, for the isolation check)
 
-**Aliases:**
-- `/purchases/inwards/all` → `/purchases/inwards/pending`
-- `/sales/outwards/all` → `/sales/outwards/pending`
-- `/purchases/:id/cancel` → `POST /purchases/status/:id {status:"cancelled"}`
+The mock-only `…@demo.test / Demo@1234` accounts do not exist in Laravel.
 
-**Mock in hybrid:**
-- Inventory: units, warehouses, stock balances/movements/adjustments/transfers, `/products/detail/:id`, `/products/low-stock`
-- Parties: suppliers, customers
-- Returns: purchase and sales returns
-- Finance: supplier payments, customer receipts, expenses, cash/bank, reconciliation, receivables/payables
-- Accounting: accounts, journals, ledger, trial balance
-- Reports and dashboard summary
-- Billing: `/subscription*`, `/onboarding/complete`
-- Platform: `/platform/{plans, subscriptions, payments, settings, …}`
-- Profile: `/user/profile`, `/user/password`
-- Sales: `/sales/:id/cancel`
+**Live modules** (all in `routing.ts`):
+- Auth and profile: `/register`, `/login`, `/password/*`, `/email/*`, `/auth/logout*`, `/user`, `/user/profile`, `/user/password`, `/onboarding/complete`
+- Organisation: `/companies*`, `/businesses*`, `/users*`, `/roles*`, `/business-members*`, `/invitations*`
+- Inventory: `/products/*` (including `/products/detail/:id` and `/products/low-stock`), `/units`, `/warehouses`, `/stock/{balances, movements, adjustments, transfers}`
+- Parties: `/suppliers`, `/customers`
+- Purchasing: `/purchases*` (including `/purchases/:id/cancel`), `/purchases/inwards/{all, pending, :id, :id/tally}`, `/purchase-returns`
+- Sales: `/sales*` (including `/sales/:id/cancel`), `/sales/outwards/{all, pending, :id, :id/dispatch, :id/delivered}`, `/sales-returns`
+- Finance: `/payment-methods`, `/expense-categories`, `/cash-bank-accounts`, `/reconciliation*`, `/payments*`, `/receivables`, `/payables`, `/expenses*`
+- Accounting: `/accounts`, `/journals*`, `/ledger`, `/trial-balance`
+- Reports: `/reports/*`, `/dashboard/summary`
+- Billing: `/subscription*`
+- Platform admin: `/platform/{companies, users, plans, subscriptions, payments, events, settings}`
 
-**How hybrid works:**
-- Every live call still sends the Bearer token plus `X-Company-ID` / `X-Business-ID`.
-- Mock calls use a separate browser store (`sb_mock_db_hybrid_v1`). On the first mock call, that store copies in the logged-in Laravel user, their companies, branches and roles, using the same IDs. Live product lists are also copied into it, so stock screens can pick real products.
-- A 401 from a mock module never logs you out.
-- Live responses go through `src/lib/api/adapters.ts`, which does the following:
-  - uses the defensive `extractList`/`extractItem` from the old frontend;
-  - maps `price` to `selling_price`;
-  - turns `supplier`/`business` objects into names;
-  - unwraps `{purchase}` on create;
-  - fills item product names;
-  - maps statuses: `pending` to `draft`, `out_for_delivery` to `dispatched`, `completed` to `delivered`/`received`;
-  - loads every page of `/users`.
+There are no path aliases any more. `/purchases/inwards/all` and `/sales/outwards/all` go to the real `all` endpoints (full history), and purchase cancel uses `POST /purchases/:id/cancel`.
 
-**Response caveats in hybrid:**
-- Finance, returns, receivables/payables and accounting run on mock documents. Live purchases and sales don't post journals or payments.
-- Live sales have no `customer_id`; they show as "Walk-in". Live documents have no tax or discount fields.
-- A live purchase `supplier_id` must exist in the backend `suppliers` table, which has no API yet. Outside full mock, the purchase form asks for the supplier ID as a number.
-- The backend's permission catalogue only covers the existing modules. For system roles (Company Owner, Manager, Staff, Super Admin), the frontend adds its own keys for the mock-only modules.
-- Payloads stay correct. Register sends `company_name`. Products send `selling_price`, `cost_price`, `opening_stock`, `min_stock_alert`, `sku`, `status`. Purchases send `supplier_id` and `purchase_date`. `price` is never sent, and there is no `GET /products`.
+**Response adapters** (`src/lib/api/adapters.ts`) still run on live responses. The new backend already returns the flat shapes the screens use, so they mostly pass data through. They are kept as a fallback for older payloads:
+- defensive `extractList`/`extractItem`;
+- `price` → `selling_price`; `supplier`/`business` objects → names; `{purchase}` unwrapped;
+- legacy statuses only: purchase/sale `pending` → `draft`, outward `out_for_delivery` → `dispatched`. Inward `completed` is kept as `completed` (the inward screens use it), and returns are not touched;
+- all pages of `/users` are loaded.
 
-## Existing endpoints used as-is (routes/api.php)
+**Headers and errors:** every call sends `Authorization: Bearer`, `Accept: application/json`, `X-Company-ID` and `X-Business-ID`. Dispatch and delivery send an `Idempotency-Key`. The error `code` is read from the top level (`plan_limit_reached`, `subscription_expired`, `payment_failed` → 402; `company_required`, `downgrade_blocked` → 422). Live calls time out after 5 seconds, and a circuit breaker pauses live calls for 15 seconds after a timeout.
+
+**Permissions:** in `false`/`hybrid` the UI uses exactly the permissions `/user` returns (the backend catalogue now covers every module). Only full mock adds the frontend's system-role defaults.
+
+## Original endpoints (routes/api.php, unchanged URLs)
 - Auth: `POST /login`, `POST /register` (`name,email,password,password_confirmation,company_name`), `POST /password/forgot`, `POST /password/reset`, `GET /email/verify/{id}/{hash}` → redirect `/signin?verified=1`, `POST /email/resend`, `POST /auth/logout`, `POST /auth/logout-all`, `GET /user` → `{id,name,email,email_verified,is_platform_admin,assignments[{role,role_id,company,company_id,business,business_id,permissions[]}]}`
 - Companies `/companies`, `/companies/create|detail/{id}|update/{id}|delete/{id}`, `/companies/{id}/structure`
 - Businesses `/businesses`, `/businesses/create|detail|update|delete`, `/users/{id}/businesses`, `/business-members/{businessId}`, `/business-members/add|remove` (`business_id,user_id,role_id`)
@@ -70,7 +58,7 @@ To switch modes, set the value in `.env.local` and restart `npm run dev`, or reb
 - Purchases `/purchases`, `/purchases/create` (`supplier_id, purchase_date, business_id, warehouse_id, expected_date, reference, notes, items[{product_id,quantity,unit_price,discount%,tax_rate%}]`), `PUT|DELETE /purchases/{id}` (draft only), `POST /purchases/{id}/confirmed` → creates inward, `/purchases/inwards/pending`, `/purchases/inwards/{id}`, `POST /purchases/inwards/{id}/tally` (`items[{product_id, received_quantity}]` **cumulative**, optional `complete:true` to close short)
 - Sales `/sales`, `/sales/create` (`customer_id, sale_date, business_id, warehouse_id, due_date, delivery_address, items[...]`), `PUT|DELETE /sales/{id}`, `POST /sales/{id}/confirmed` → creates outward, `/sales/outwards/pending`, `/sales/outwards/{id}`, `POST /sales/outwards/{id}/dispatch` (idempotent, honours `Idempotency-Key`, returns `already_processed`), `POST /sales/outwards/{id}/delivered` (`received_by, notes`)
 
-## New endpoints (Laravel style, needed by the frontend)
+## New endpoints (implemented by the Laravel 12 backend)
 | Area | Endpoints |
 |---|---|
 | Profile | `PUT /user/profile` (`name,email,phone`), `PUT /user/password` (`current_password,password,password_confirmation`) |

@@ -58,7 +58,15 @@ function mapItemIn(res: any, fn: (r: any) => any): any {
 /* ------------------------------------------------------------ entities */
 const PURCHASE_STATUS: Record<string, string> = { pending: "draft" };
 const SALE_STATUS: Record<string, string> = { pending: "draft", out_for_delivery: "dispatched", completed: "delivered" };
-const FLOW_STATUS: Record<string, string> = { completed: "received", out_for_delivery: "dispatched" };
+/**
+ * Legacy warehouse-flow statuses only. Inwards legitimately use `completed` (pending ->
+ * partially_received -> completed), which the inward screens expect, so it is NOT remapped.
+ * Outwards: the old backend used `out_for_delivery`; the new one returns `dispatched`.
+ */
+const FLOW_STATUS: Record<"inward" | "outward", Record<string, string>> = {
+  inward: { received: "completed" },
+  outward: { out_for_delivery: "dispatched", completed: "delivered" },
+};
 
 export function normProduct(p: any) {
   if (!p || typeof p !== "object") return p;
@@ -110,7 +118,7 @@ function normFlow(f: any, kind: "inward" | "outward", parentItems?: any[]) {
   });
   const base = {
     ...f,
-    status: FLOW_STATUS[f.status] ?? f.status,
+    status: FLOW_STATUS[kind][f.status] ?? f.status,
     business: nameOf(f.business) ?? nameOf(doc?.business),
     warehouse: nameOf(f.warehouse) ?? null,
     items,
@@ -118,8 +126,9 @@ function normFlow(f: any, kind: "inward" | "outward", parentItems?: any[]) {
     total_received: items.reduce((s: number, l: any) => s + l.received_quantity, 0),
     total_quantity: items.reduce((s: number, l: any) => s + l.quantity, 0),
   };
-  if (kind === "inward") return { ...base, purchase_no: f.purchase_no ?? doc?.invoice_no ?? null, supplier_name: f.supplier_name ?? nameOf(doc?.supplier) ?? null, purchase_date: doc?.purchase_date ?? null };
-  return { ...base, sale_no: f.sale_no ?? doc?.invoice_no ?? null, customer_name: f.customer_name ?? nameOf(doc?.customer) ?? "Walk-in", sale_date: doc?.sale_date ?? null, total_amount: num(doc?.total_amount) };
+  // The new backend already flattens these onto the inward/outward; the nested doc is the legacy fallback.
+  if (kind === "inward") return { ...base, purchase_no: f.purchase_no ?? doc?.invoice_no ?? null, supplier_name: f.supplier_name ?? nameOf(doc?.supplier) ?? null, purchase_date: f.purchase_date ?? doc?.purchase_date ?? null };
+  return { ...base, sale_no: f.sale_no ?? doc?.invoice_no ?? null, customer_name: f.customer_name ?? nameOf(doc?.customer) ?? "Walk-in", sale_date: f.sale_date ?? doc?.sale_date ?? null, total_amount: num(f.total_amount ?? doc?.total_amount) };
 }
 
 export function normDoc(d: any, kind: "purchase" | "sale") {
@@ -186,22 +195,29 @@ function normUser(u: any) {
  */
 export async function adaptLive(method: string, pattern: string, res: Json, get: LiveGet): Promise<Json> {
   try {
+    if (method === "DELETE") return res;
     if (pattern.startsWith("/products/")) {
+      if (method === "GET" && pattern === "/products/detail/:id") return mapItemIn(res, normProduct);
       return method === "GET" ? mapListIn(res, normProduct) : mapItemIn(res, (x) => (x?.product ? { ...x, product: normProduct(x.product) } : normProduct(x)));
     }
-    if (pattern === "/purchases/inwards/pending") return mapListIn(res, (f) => normFlow(f, "inward"));
+    // Warehouse inwards / outwards (lists, detail, and the tally / dispatch / delivered actions).
+    if (pattern === "/purchases/inwards/pending" || pattern === "/purchases/inwards/all") return mapListIn(res, (f) => normFlow(f, "inward"));
     if (pattern === "/purchases/inwards/:id" && method === "GET") {
       const inward = extractItem<any>(res);
       let parentItems: any[] | undefined;
-      if (inward?.purchase_id && !inward?.purchase?.items) {
+      const hasOrdered = Array.isArray(inward?.items) && inward.items.every((l: any) => l?.ordered_quantity !== undefined && l?.ordered_quantity !== null);
+      if (inward?.purchase_id && !inward?.purchase?.items && !hasOrdered) {
         parentItems = extractItem<any>(await get(`/purchases/${inward.purchase_id}`).catch(() => null))?.items;
       }
       return mapItemIn(res, (f) => normFlow(f, "inward", parentItems));
     }
-    if (pattern === "/sales/outwards/pending") return mapListIn(res, (f) => normFlow(f, "outward"));
-    if (pattern === "/sales/outwards/:id" && method === "GET") return mapItemIn(res, (f) => normFlow(f, "outward"));
-    if (pattern.startsWith("/purchases")) return method === "GET" && /^\/purchases(\/business\/:id)?$/.test(pattern) ? mapListIn(res, (d) => normDoc(d, "purchase")) : mapItemIn(res, (d) => normDoc(d, "purchase"));
-    if (pattern.startsWith("/sales")) return method === "GET" && /^\/sales(\/business\/:id)?$/.test(pattern) ? mapListIn(res, (d) => normDoc(d, "sale")) : mapItemIn(res, (d) => normDoc(d, "sale"));
+    if (pattern.startsWith("/purchases/inwards/")) return mapItemIn(res, (f) => normFlow(f, "inward"));
+    if (pattern === "/sales/outwards/pending" || pattern === "/sales/outwards/all") return mapListIn(res, (f) => normFlow(f, "outward"));
+    if (pattern.startsWith("/sales/outwards/")) return mapItemIn(res, (f) => normFlow(f, "outward"));
+    // Purchases / sales documents. Exact prefix so /purchase-returns and /sales-returns are NOT
+    // run through normDoc (returns use status `completed`, which the sale mapping would corrupt).
+    if (pattern === "/purchases" || pattern.startsWith("/purchases/")) return method === "GET" && /^\/purchases(\/business\/:id)?$/.test(pattern) ? mapListIn(res, (d) => normDoc(d, "purchase")) : mapItemIn(res, (d) => normDoc(d, "purchase"));
+    if (pattern === "/sales" || pattern.startsWith("/sales/")) return method === "GET" && /^\/sales(\/business\/:id)?$/.test(pattern) ? mapListIn(res, (d) => normDoc(d, "sale")) : mapItemIn(res, (d) => normDoc(d, "sale"));
     if (pattern === "/users" && method === "GET") {
       // Laravel paginates users 10 per page: pull the remaining pages so the table is complete.
       let all = extractListDeep<any>(res);

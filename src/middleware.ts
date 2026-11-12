@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC = ["/signin", "/signup", "/verify-email", "/forgot-password", "/reset-password", "/accept-invite"];
+const PUBLIC = ["/signin", "/signup", "/verify-email", "/forgot-password", "/reset-password", "/accept-invite", "/logout", "/auth/logout"];
 const GUEST_ONLY = ["/signin", "/signup"];
 
 export function middleware(request: NextRequest) {

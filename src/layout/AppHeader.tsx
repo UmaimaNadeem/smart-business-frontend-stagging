@@ -6,7 +6,7 @@ import { ThemeToggleButton } from "@/components/common/ThemeToggleButton";
 import { Dropdown } from "@/components/ui/dropdown/Dropdown";
 import { useSidebar } from "@/context/SidebarContext";
 import { useAuth } from "@/context/AuthContext";
-import { API_MODE, MOCK_ENABLED, USE_MOCK } from "@/lib/config";
+import { USE_MOCK } from "@/lib/config";
 import Logo from "@/components/sb/Logo";
 
 const sel = "h-10 rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300";
@@ -51,7 +51,7 @@ export default function AppHeader() {
             </div>
           )}
           <div className="ml-auto flex items-center gap-2">
-            {MOCK_ENABLED && <span title={API_MODE === "hybrid" ? "Login, users, roles, companies, branches, products, purchases and sales use the live API; other modules use demo data in this browser" : undefined} className="hidden rounded-full bg-warning-50 px-2.5 py-1 text-xs font-medium text-warning-700 sm:inline">{USE_MOCK ? "Demo data" : "Hybrid: new modules on demo data"}</span>}
+            {USE_MOCK && <span className="hidden rounded-full bg-warning-50 px-2.5 py-1 text-xs font-medium text-warning-700 sm:inline">Demo data</span>}
             <ThemeToggleButton />
             <div className="relative">
               <button onClick={() => setMenu(!menu)} className="dropdown-toggle flex items-center gap-2 text-gray-700 dark:text-gray-300">
@@ -67,7 +67,7 @@ export default function AppHeader() {
                 <ul className="flex flex-col gap-1 pt-3 text-sm">
                   <li><Link onClick={() => setMenu(false)} href="/profile" className="block rounded-lg px-3 py-2 text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/5">Profile & password</Link></li>
                   <li><Link onClick={() => setMenu(false)} href="/billing" className="block rounded-lg px-3 py-2 text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/5">Subscription</Link></li>
-                  {MOCK_ENABLED && <li><button onClick={resetDemo} className="w-full rounded-lg px-3 py-2 text-left text-warning-600 hover:bg-gray-100 dark:hover:bg-white/5">{USE_MOCK ? "Reset demo data" : "Reset mock-module data"}</button></li>}
+                  {USE_MOCK && <li><button onClick={resetDemo} className="w-full rounded-lg px-3 py-2 text-left text-warning-600 hover:bg-gray-100 dark:hover:bg-white/5">Reset demo data</button></li>}
                   <li><button onClick={logout} className="w-full rounded-lg px-3 py-2 text-left text-error-600 hover:bg-gray-100 dark:hover:bg-white/5">Sign out</button></li>
                 </ul>
               </Dropdown>

@@ -1,8 +1,8 @@
 "use client";
-import { MOCK_ENABLED } from "@/lib/config";
 import { SYSTEM_ROLE_PERMISSIONS, expandPermissions } from "@/lib/permissions";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, extractList, onApiError, unwrap } from "@/lib/api/client";
+import { api, extractList, onApiError, resetLiveCircuit, unwrap } from "@/lib/api/client";
+import { errorMessage, isNetworkError } from "@/lib/api/errors";
 import { clearToken, clearWorkspace, getToken, getWorkspace, setToken, setWorkspace, Workspace } from "@/lib/api/session";
 import { USE_MOCK } from "@/lib/config";
 import { setCurrency } from "@/lib/format";
@@ -29,6 +29,8 @@ interface Ctx {
   selectWorkspace: (ws: Workspace) => void;
   refresh: () => Promise<void>;
   refreshSubscription: () => Promise<void>;
+  apiError: string | null;
+  retryApi: () => Promise<void>;
   login: (token: string, expiresAt?: string | null) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -41,6 +43,15 @@ export function useAuth() {
   return c;
 }
 
+function normalizeMe(raw: unknown): Me {
+  const r = raw as Record<string, unknown> | null;
+  const data = r && typeof r === "object" && r.data && typeof r.data === "object" ? (r.data as Record<string, unknown>) : r;
+  const user = (data && typeof data === "object" && data.user && typeof data.user === "object" && !Array.isArray(data.assignments)
+    ? data.user
+    : data) as Me;
+  return { ...user, assignments: Array.isArray(user?.assignments) ? user.assignments : [] };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [company, setCompany] = useState<Company | null>(null);
   const [subscription, setSubscription] = useState<SubSummary | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const companies = useMemo(() => {
     const m = new Map<number, string>();
@@ -65,38 +77,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const loadWorkspace = useCallback(async (user: Me) => {
-    const ids = Array.from(new Set(user.assignments.map((a) => a.company_id)));
+    const ids = Array.from(new Set((user.assignments ?? []).map((a) => a.company_id)));
     let ws = getWorkspace();
     if (!ws.companyId || !ids.includes(ws.companyId)) ws = { companyId: ids[0] ?? null, businessId: null };
     setWorkspace(ws);
     setWs(ws);
     if (!ws.companyId || !user.email_verified) { setBranches([]); setCompany(null); return; }
     try {
-      const [b, c] = await Promise.all([api.get("/businesses"), api.get(`/companies/detail/${ws.companyId}`)]);
+      const [b, c] = await Promise.all([api.get("/businesses"), api.get(`/companies/detail/${ws.companyId}`), refreshSubscription()]);
       const list = extractList<Branch>(b);
       setBranches(list);
       if (ws.businessId && !list.some((x) => x.id === ws.businessId)) { ws = { ...ws, businessId: null }; setWorkspace(ws); setWs(ws); }
       const co = unwrap<Company>(c);
       setCurrency(co.currency);
       setCompany(co);
-      await refreshSubscription();
-    } catch {
-      /* handled by page-level errors */
+      setApiError(null);
+    } catch (e) {
+      if (isNetworkError(e)) setApiError(errorMessage(e));
     }
   }, [refreshSubscription]);
 
   const refresh = useCallback(async () => {
-    if (!getToken()) { setMe(null); setLoading(false); return; }
+    if (!getToken()) { setMe(null); setLoading(false); setApiError(null); return; }
     try {
-      const user = await api.get<Me>("/user");
+      const raw = await api.get<any>("/user");
+      const user = normalizeMe(raw);
       setMe(user);
+      setApiError(null);
       await loadWorkspace(user);
-    } catch {
-      setMe(null);
+    } catch (e) {
+      setApiError(errorMessage(e));
+      if (!isNetworkError(e)) setMe(null);
     } finally {
       setLoading(false);
     }
   }, [loadWorkspace]);
+
+  const retryApi = useCallback(async () => {
+    resetLiveCircuit();
+    setLoading(true);
+    await refresh();
+  }, [refresh]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -119,8 +140,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .filter((a) => a.company_id === workspace.companyId && (a.business_id === null || !workspace.businessId || a.business_id === workspace.businessId))
       .forEach((a) => {
         (a.permissions ?? []).forEach((p) => set.add(p));
-        // Hybrid: system roles also get the frontend keys for modules the backend has no permissions for yet.
-        if (MOCK_ENABLED && SYSTEM_ROLE_PERMISSIONS[a.role]) expandPermissions(SYSTEM_ROLE_PERMISSIONS[a.role]).forEach((p) => set.add(p));
+        // Full mock only: the Laravel backend now returns the complete permission catalogue per assignment,
+        // so live/hybrid use exactly what /user sends (no UI-only grants that would end in 403s).
+        if (USE_MOCK && SYSTEM_ROLE_PERMISSIONS[a.role]) expandPermissions(SYSTEM_ROLE_PERMISSIONS[a.role]).forEach((p) => set.add(p));
       });
     return set;
   }, [me, workspace]);
@@ -136,11 +158,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const logout = useCallback(async () => {
-    try { await api.post("/auth/logout"); } catch { /* token may already be invalid */ }
+    // Clear the cookie first so a hanging Laravel call cannot trap the session.
     clearToken();
     clearWorkspace();
     setMe(null);
-    window.location.href = "/signin";
+    window.location.replace("/signin");
   }, []);
 
   const value: Ctx = {
@@ -148,7 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     workspaceKey: `${workspace.companyId}:${workspace.businessId}`,
     currency: company?.currency || "PKR",
     can, canAny, hasCompany: companies.length > 0,
-    selectWorkspace, refresh, refreshSubscription, login, logout,
+    selectWorkspace, refresh, refreshSubscription, login, logout, apiError, retryApi,
   };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

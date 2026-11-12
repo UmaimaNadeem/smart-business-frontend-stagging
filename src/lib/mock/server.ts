@@ -34,10 +34,7 @@ export function mockRoutes() {
   return routes.map((r) => `${r.method} ${r.pattern}`);
 }
 
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 export async function mockFetch(method: string, url: string, headers: Record<string, string>, body: unknown): Promise<{ status: number; body: unknown }> {
-  await delay(120 + Math.random() * 120);
   const db: DB = getDB(seed);
   const [path, qs] = url.split("?");
   const query = new URLSearchParams(qs ?? "");
