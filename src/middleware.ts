@@ -1,29 +1,21 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+const PUBLIC = ["/signin", "/signup", "/verify-email", "/forgot-password", "/reset-password", "/accept-invite"];
+const GUEST_ONLY = ["/signin", "/signup"];
+
 export function middleware(request: NextRequest) {
   const token = request.cookies.get("token")?.value;
+  const path = request.nextUrl.pathname;
+  const isPublic = PUBLIC.some((p) => path === p || path.startsWith(p + "/"));
 
-  const isAuthPage =
-    request.nextUrl.pathname.startsWith("/signin") ||
-    request.nextUrl.pathname.startsWith("/signup");
-
-  // 🚫 Not logged in → redirect to signin
-  if (!token && !isAuthPage) {
-    return NextResponse.redirect(new URL("/signin", request.url));
-  }
-
-  // 🚫 Logged in → block auth pages
-  if (token && isAuthPage) {
+  if (!token && !isPublic) return NextResponse.redirect(new URL("/signin", request.url));
+  if (token && GUEST_ONLY.some((p) => path.startsWith(p)) && !request.nextUrl.searchParams.has("expired")) {
     return NextResponse.redirect(new URL("/", request.url));
   }
-
   return NextResponse.next();
 }
 
-// 🟢 Matcher — which routes middleware applies to
 export const config = {
-  matcher: [
-    "/((?!api|_next/static|_next/image|images|favicon.ico|.*\\..*).*)",
-  ],
+  matcher: ["/((?!api|_next/static|_next/image|images|favicon.ico|.*\\..*).*)"],
 };

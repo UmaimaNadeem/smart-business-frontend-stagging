@@ -1,45 +1,26 @@
 import GridShape from "@/components/common/GridShape";
 import ThemeTogglerTwo from "@/components/common/ThemeTogglerTwo";
-
-import { ThemeProvider } from "@/context/ThemeContext";
-import Image from "next/image";
-import Link from "next/link";
+import Logo from "@/components/sb/Logo";
 import React from "react";
 
-export default function AuthLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative p-6 bg-white z-1 dark:bg-gray-900 sm:p-0">
-      <ThemeProvider>
-        <div className="relative flex lg:flex-row w-full h-screen justify-center flex-col  dark:bg-gray-900 sm:p-0">
-          {children}
-          <div className="lg:w-1/2 w-full h-full bg-brand-950 dark:bg-white/5 lg:grid items-center hidden">
-            <div className="relative items-center justify-center  flex z-1">
-              {/* <!-- ===== Common Grid Shape Start ===== --> */}
-              <GridShape />
-              <div className="flex flex-col items-center max-w-xs">
-                <Link href="/" className="block mb-4">
-                  <Image
-                    width={431}
-                    height={48}
-                    src="/images/logo/auth-logo.svg"
-                    alt="Logo"
-                  />
-                </Link>
-                <p className="text-center text-gray-400 dark:text-white/60">
-                  Welcome to our platform where you can manage your sales, purchases, and inventory with ease.
-                </p>
-              </div>
+    <div className="relative z-1 bg-white p-6 sm:p-0 dark:bg-gray-900">
+      <div className="relative flex min-h-screen w-full flex-col justify-center sm:p-0 lg:flex-row dark:bg-gray-900">
+        <div className="flex w-full flex-1 flex-col lg:w-1/2">
+          <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-10">{children}</div>
+        </div>
+        <div className="hidden h-auto w-full items-center bg-brand-950 lg:grid lg:w-1/2 dark:bg-white/5">
+          <div className="relative z-1 flex items-center justify-center">
+            <GridShape />
+            <div className="flex max-w-xs flex-col items-center">
+              <div className="mb-4"><Logo light /></div>
+              <p className="text-center text-gray-400 dark:text-white/60">Inventory, purchasing, sales and accounting for growing businesses — in one place.</p>
             </div>
           </div>
-          <div className="fixed bottom-6 right-6 z-50 hidden sm:block">
-            <ThemeTogglerTwo />
-          </div>
         </div>
-      </ThemeProvider>
+        <div className="fixed right-6 bottom-6 z-50 hidden sm:block"><ThemeTogglerTwo /></div>
+      </div>
     </div>
   );
 }
